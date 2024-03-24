@@ -1,0 +1,143 @@
+---
+title: "Lab04Learn"
+output:
+  pdf_document: default
+  html_document: default
+date: "2024-03-20"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Lab04 learning
+
+This is an Learning page for lab04 cross validation
+
+```{r echo=TRUE,cache=TRUE}
+library(tidyverse)
+library(leaps)
+library(janitor)
+
+
+
+sgemm <-read.csv("./data/sgemm_product.csv")
+
+set.seed(47)
+
+#sample 500 index of rows
+my_sample <- sample(1:nrow(sgemm),500)
+
+#add a column name logrun1 which is log of run1_ms
+#get rid of the run1_ms avoid the depulication and
+#useless run2_ms,run3_ms,run4_ms
+sgemm1 <- sgemm %>% janitor::clean_names() %>% 
+        mutate(logrun1 = log(run1_ms)) %>% 
+        select(-run1_ms,-run2_ms,-run3_ms,-run4_ms)
+
+
+#get rows according the index vectors
+sgemm1 <- sgemm1[my_sample,]
+
+#construct a data frame with loggrun1 and all the intersections of x columns.
+#using to find the possible relations between the 2 degree of intersections of x with the prediction
+
+mf <- model.frame(logrun1~.^2,data=sgemm1)
+
+#construct a matrix for regsubset, without the Y.
+X <- model.matrix(logrun1~.^2,mf)[,-1]
+y <- sgemm1$logrun1
+
+#stepwise regression and best subset selection
+subset1 <- regsubsets(x=X,y=y,nvmax=20,method = 'backward')
+
+subset1.summ <- summary(subset1)
+
+apparentErrors <- subset1.summ$rss/(500-1:20)
+plot(1:20,apparentErrors)
+
+
+allyhat<-function(xtrain, ytrain, xtest,lambdas,nvmax=50){
+
+  n<-nrow(xtrain)
+  yhat<-matrix(nrow=nrow(xtest),ncol=length(lambdas))
+  
+  search<-regsubsets(xtrain,ytrain, nvmax=nvmax, method="back")
+  summ<-summary(search)
+  for(i in 1:length(lambdas)){
+    penMSE<- n*log(summ$rss)+lambdas[i]*(1:nvmax)
+    best<-which.min(penMSE)  #lowest AIC
+    betahat<-coef(search, best) #coefficients
+    xinmodel<-cbind(1,xtest)[,summ$which[best,]] #predictors in that model
+    yhat[,i]<-xinmodel%*%betahat
+  }
+  yhat
+}
+
+
+lambdas <- c(2,4,6,8,10,12)
+n <- nrow(X)
+folds <- sample(rep(1:10, length.out=n))
+fitted <- matrix(nrow=n,ncol=length(lambdas))
+for(i in 1:10){
+  train <- (1:n)[folds != i] # indices for train
+  test <- (1:n)[folds == i] # indices for test
+  fitted[test,] <- allyhat(X[train,], y[train],
+                           X[test,], lambdas)
+}
+mspe_cv <- colMeans((y-fitted)^2)  
+
+#picking \lambdas = 8
+
+#task 4
+logrun2 <- log(sgemm[my_sample,]$Run2..ms.)
+best_lambda <- 8
+
+search <- regsubsets(X, y, nvmax = 20, method = 'backward')
+summ <- summary(search)
+# penalised_rss
+penalised_rss <- 500*log(summ$rss) + best_lambda*(1:20)
+best_mod <- which.min(penalised_rss)
+
+best_mod
+# picking the best (i.e. min penalised_rss)
+beta_hat <- coef(search, best_mod)
+beta_hat # coefficients
+
+# organise X matrix for prediction
+# the matrix includes an intercept term 1 and only the variables selected by the best model, which can then be used for prediction or further analysis.
+Xpred <- cbind(1, X)[, summ$which[best_mod,]]
+colnames(Xpred) # varibles been picked = beta_hat names
+
+# generate prediction, i.e. y_hat
+y_hat <- Xpred %*% beta_hat # y_hat = X * beta_hat
+
+# calculate mspe_sample
+mspe_sample <- sum((logrun2 - y_hat)^2)/length(y_hat)
+mspe_sample
+
+
+sgemm <- sgemm %>% janitor::clean_names() %>% 
+        mutate(logrun2 = log(run2_ms)) %>% 
+        select(-run1_ms,-run2_ms,-run3_ms,-run4_ms)
+
+mf <- model.frame(logrun2~.^2,data=sgemm)
+
+#construct a matrix for regsubset, without the Y.
+X <- model.matrix(logrun2~.^2,mf)[,-1]
+y <- sgemm$logrun2
+
+
+fullPred <- cbind(1, X)[, summ$which[best_mod,]]
+colnames(fullPred)
+
+
+y_hat_full <- fullPred %*% beta_hat # y_hat = X * beta_hat
+
+mspe_sample <- sum((y - y_hat_full)^2)/length(y_hat_full)
+mspe_sample
+
+```
+
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
